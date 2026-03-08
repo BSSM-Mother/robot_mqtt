@@ -15,7 +15,8 @@ ROS2 topics published:
 
 ROS2 parameters:
     api_url          (string)  폴링할 전체 URL
-                               default: "http://localhost:5000/api/robot/state"
+                               default: ENV ROBOT_STATE_API_URL
+                               fallback: 없음(미설정 시 폴링 안 함)
     poll_interval_s  (double)  폴링 주기 (초), default: 1.0
     request_timeout  (double)  HTTP 타임아웃 (초), default: 2.0
 """
@@ -23,6 +24,7 @@ ROS2 parameters:
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
+import os
 
 import requests
 
@@ -33,13 +35,17 @@ class ApiBridge(Node):
         super().__init__('api_bridge')
 
         # ── 파라미터 ──────────────────────────────────────────
+        default_api_url = os.getenv(
+            'ROBOT_STATE_API_URL',
+            '')
         self.declare_parameter('api_url',
-                               'http://localhost:5000/api/robot/state')
+                               default_api_url)
         self.declare_parameter('poll_interval_s', 1.0)
         self.declare_parameter('request_timeout', 2.0)
 
-        self._url = (self.get_parameter('api_url')
-                     .get_parameter_value().string_value)
+        param_api_url = (self.get_parameter('api_url')
+                         .get_parameter_value().string_value)
+        self._url = param_api_url or default_api_url
         interval = (self.get_parameter('poll_interval_s')
                     .get_parameter_value().double_value)
         self._timeout = (self.get_parameter('request_timeout')
@@ -57,10 +63,31 @@ class ApiBridge(Node):
 
         self.get_logger().info(
             f'ApiBridge 시작 — URL: {self._url}  주기: {interval}s')
+        if not self._url:
+            self.get_logger().warn(
+                'API URL 미설정: ROBOT_STATE_API_URL 또는 ROS 파라미터 api_url 설정 필요')
+
+    @staticmethod
+    def _to_bool(value) -> bool:
+        """Convert typical API flag values (0/1, true/false, strings) to bool."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {'1', 'true', 'on', 'yes', 'y'}:
+                return True
+            if normalized in {'0', 'false', 'off', 'no', 'n', ''}:
+                return False
+        return bool(value)
 
     # ──────────────────────────────────────────────────────────
 
     def _poll(self):
+        if not self._url:
+            return
+
         try:
             resp = requests.get(self._url, timeout=self._timeout)
             resp.raise_for_status()
@@ -73,13 +100,13 @@ class ApiBridge(Node):
             return
 
         # ── follow_mode ────────────────────────────────────────
-        follow = bool(data.get('follow', False))
+        follow = self._to_bool(data.get('follow', False))
         msg = Bool()
         msg.data = follow
         self._follow_pub.publish(msg)
 
         # ── buzzer: rising edge(false→true) 에서만 트리거 ──────
-        buzzer = bool(data.get('buzzer', False))
+        buzzer = self._to_bool(data.get('buzzer', False))
         if buzzer and not self._prev_buzzer:
             trig = Bool()
             trig.data = True
