@@ -20,8 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'mqtt_bridge = robot_mqtt.mqtt_bridge:main',  # 구버전 (미사용)
-            'api_bridge = robot_mqtt.api_bridge:main',
+            'mqtt_bridge = robot_mqtt.mqtt_bridge:main',
         ],
     },
 )
